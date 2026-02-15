@@ -10,9 +10,9 @@ from sklearn.metrics import (accuracy_score, roc_auc_score, precision_score,
                              recall_score, f1_score, matthews_corrcoef,
                              classification_report, confusion_matrix)
 
-st.set_page_config(page_title="Breast Cancer Classifier – FAST", layout="wide")
-st.title("Breast Cancer Wisconsin – Model Explorer (FAST)")
-st.caption("Lazy-training per model + caching. Upload CSV, pick model, evaluate. Includes ROC + Threshold analysis.")
+st.set_page_config(page_title="Breast Cancer Classifier Explorer", layout="wide")
+st.title("Breast Cancer Wisconsin (Diagnostic) – Model Explorer")
+st.caption("Upload test CSV, select a model, and view metrics, ROC curve, threshold analysis, confusion matrix, and classification report.")
 
 # ------------------ Sidebar options ------------------
 st.sidebar.header("Settings")
