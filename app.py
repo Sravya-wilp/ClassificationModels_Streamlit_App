@@ -1,5 +1,4 @@
 
-import io
 import json
 import joblib
 import numpy as np
@@ -8,47 +7,100 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from sklearn.metrics import (accuracy_score, roc_auc_score, precision_score,
-                             recall_score, f1_score, matthews_corrcoef,
-                             classification_report, confusion_matrix)
+from sklearn.metrics import (
+    accuracy_score, roc_auc_score, precision_score,
+    recall_score, f1_score, matthews_corrcoef,
+    classification_report, confusion_matrix
+)
 
 st.set_page_config(page_title="Breast Cancer Classifier Explorer", layout="wide")
 st.title("Breast Cancer Wisconsin (Diagnostic) – Model Explorer")
 st.caption("Upload test CSV, select a model, and view metrics, ROC curve, threshold analysis, confusion matrix, and classification report.")
 
-ART = Path(__file__).resolve().parent / 'model_artifacts'
+# ----------------------
+# Train models in-app (cached) to avoid pickle compatibility issues
+# ----------------------
+@st.cache_resource
+def train_models_in_app():
+    from sklearn.datasets import load_breast_cancer
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+    from sklearn.compose import ColumnTransformer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.tree import DecisionTreeClassifier
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.naive_bayes import GaussianNB
+    from sklearn.ensemble import RandomForestClassifier
+    try:
+        from xgboost import XGBClassifier
+        HAS_XGB = True
+    except Exception:
+        HAS_XGB = False
 
-# Load available models dynamically
-model_files = list(ART.glob('*.pkl'))
-model_names = [f.stem for f in model_files]
-name_map = {f.stem: f for f in model_files}
+    data = load_breast_cancer(as_frame=True)
+    X = data.data.copy()
+    y = (data.target == 0).astype(int)  # 1=malignant, 0=benign
 
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, stratify=y, test_size=0.2, random_state=42
+    )
+
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+    from sklearn.compose import ColumnTransformer
+
+    num_cols = list(X.columns)
+    preprocess = ColumnTransformer([("num", Pipeline([("scaler", StandardScaler())]), num_cols)])
+
+    models = {
+        "logistic_regression": Pipeline([("preprocess", preprocess),
+                                         ("clf", LogisticRegression(max_iter=1000, solver="lbfgs", random_state=42))]),
+        "decision_tree":       DecisionTreeClassifier(random_state=42),
+        "knn":                 Pipeline([("preprocess", preprocess),
+                                         ("clf", KNeighborsClassifier(n_neighbors=5))]),
+        "naive_bayes_gaussian": GaussianNB(),
+        "random_forest":       RandomForestClassifier(n_estimators=300, random_state=42),
+    }
+    if HAS_XGB:
+        models["xgboost"] = XGBClassifier(
+            n_estimators=300, max_depth=4, learning_rate=0.05,
+            subsample=0.9, colsample_bytree=0.9, eval_metric="logloss",
+            random_state=42, tree_method="hist"
+        )
+
+    # Fit all models
+    for mdl in models.values():
+        mdl.fit(X_train, y_train)
+
+    # Also prepare a sample test CSV for user upload
+    sample = X_test.copy(); sample['target'] = y_test.values
+    sample_csv = sample.to_csv(index=False)
+
+    return models, list(X.columns), sample_csv
+
+MODELS, FEATURE_NAMES, SAMPLE_CSV = train_models_in_app()
+
+# UI controls
 col_left, col_right = st.columns([1,1])
 with col_left:
-    chosen = st.selectbox("Select Trained Model", options=model_names, index=0 if model_names else None,
-                          format_func=lambda s: s.replace('_',' ').title())
+    chosen = st.selectbox(
+        "Select Trained Model",
+        options=list(MODELS.keys()),
+        index=0,
+        format_func=lambda s: s.replace('_',' ').title()
+    )
     thr = st.slider("Decision Threshold (for malignant=1)", 0.1, 0.9, 0.5, 0.05)
 with col_right:
     st.download_button(
         label="Download Sample Test CSV",
-        data=(ART / 'sample_test.csv').read_bytes() if (ART/'sample_test.csv').exists() else b'',
+        data=SAMPLE_CSV.encode('utf-8'),
         file_name='sample_test.csv',
-        mime='text/csv',
-        disabled=not (ART/'sample_test.csv').exists()
+        mime='text/csv'
     )
 
-uploaded = st.file_uploader("Upload CSV (must contain the model feature columns; optional labels in 'target' or 'diagnosis')", type=['csv'])
-
-@st.cache_data
-def load_metrics():
-    p = ART / 'metrics.json'
-    if p.exists():
-        with open(p, 'r') as f:
-            return json.load(f)
-    return None
-
-meta = load_metrics()
-feature_names = meta.get('feature_names') if meta else None
+uploaded = st.file_uploader("Upload CSV (must contain the model features; optional labels in 'target' or 'diagnosis')", type=['csv'])
 
 if uploaded is not None and chosen is not None:
     df = pd.read_csv(uploaded)
@@ -64,7 +116,7 @@ if uploaded is not None and chosen is not None:
     else:
         X = df
 
-    model = joblib.load(name_map[chosen])
+    model = MODELS[chosen]
 
     # Predict prob if available
     y_prob = None
@@ -85,7 +137,7 @@ if uploaded is not None and chosen is not None:
         'pred_label(malignant=1)': y_pred,
         'prob_malignant': y_prob if y_prob is not None else np.nan
     })
-    st.dataframe(pd.concat([X.reset_index(drop=True).head(10), preview.head(10)], axis=1))
+    st.dataframe(pd.concat([X.reset_index(drop=True).head(10), preview.head(10)], axis=1), width='stretch')
 
     if y_true is not None:
         st.subheader("Evaluation Metrics")
@@ -99,7 +151,7 @@ if uploaded is not None and chosen is not None:
             'Metric': ['Accuracy','AUC','Precision','Recall','F1','MCC'],
             'Value': [acc, auc, prec, rec, f1, mcc]
         })
-        st.dataframe(mdf.style.format({'Value': '{:.4f}'}), use_container_width=True)
+        st.dataframe(mdf.style.format({'Value': '{:.4f}'}), width='stretch')
 
         # --- AUC ROC Curve ---
         if y_prob is not None:
@@ -130,12 +182,9 @@ if uploaded is not None and chosen is not None:
                 ra = recall_score(y_true, yp, zero_division=0)
                 fa = f1_score(y_true, yp, zero_division=0)
                 rows.append({'Threshold': round(float(t),2), 'Precision': pa, 'Recall': ra, 'F1': fa})
-            tdf = pd.DataFrame(rows)
-            c1, c2 = st.columns([1.2,1])
-            with c1:
-                st.line_chart(tdf.set_index('Threshold'))
-            with c2:
-                st.dataframe(tdf.style.format({'Precision':'{:.3f}','Recall':'{:.3f}','F1':'{:.3f}'}), use_container_width=True)
+            tdf = pd.DataFrame(rows).set_index('Threshold')
+            st.line_chart(tdf, width='stretch')
+            st.dataframe(tdf.reset_index().style.format({'Precision':'{:.3f}','Recall':'{:.3f}','F1':'{:.3f}'}), width='stretch')
 
         st.subheader("Confusion Matrix")
         cm = confusion_matrix(y_true, y_pred)
@@ -153,4 +202,4 @@ if uploaded is not None and chosen is not None:
     else:
         st.info("No ground-truth labels found in the uploaded CSV. Include a 'target' column (1=malignant,0=benign) or 'diagnosis' column (M/B) to view evaluation metrics.")
 else:
-    st.info("Upload a CSV and pick a model to evaluate. You can also download a sample test CSV from the right panel.")
+    st.info("Upload a CSV and pick a model to evaluate. You can also use the 'Download Sample Test CSV' button to get a ready-made test file.")
