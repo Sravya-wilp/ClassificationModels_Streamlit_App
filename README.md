@@ -50,3 +50,5 @@ Add your concise observations here after inspecting the filled table.
 1. Push this repo to GitHub
 2. Visit https://streamlit.io/cloud and sign in with GitHub
 3. Click **New app** → select repo/branch → choose `app.py` → **Deploy**
+
+Deployed Link: https://ml-classification-model-comparision.streamlit.app/
