@@ -11,7 +11,7 @@ from sklearn.metrics import (accuracy_score, roc_auc_score, precision_score,
                              classification_report, confusion_matrix)
 
 st.set_page_config(page_title="Breast Cancer Classifier Explorer", layout="wide")
-st.title("Breast Cancer Wisconsin (Diagnostic) – Model Explorer")
+st.title("Breast Cancer Diagnostic – Model Explorer")
 st.caption("Upload test CSV, select a model, and view metrics, ROC curve, threshold analysis, confusion matrix, and classification report.")
 
 # ------------------ Sidebar options ------------------
