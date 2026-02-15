@@ -20,26 +20,21 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 
-# Try to import XGBoost
 try:
     from xgboost import XGBClassifier
     HAS_XGB = True
 except Exception:
     HAS_XGB = False
 
-ARTIFACTS = Path(__file__).resolve().parents[1] / 'model_artifacts'
+ARTIFACTS = Path('model_artifacts')
 ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
 
-# Load dataset
 BUNCH = load_breast_cancer(as_frame=True)
-# Map target: malignant -> 1 (positive), benign -> 0
-# In sklearn, target 0=malignant, 1=benign
-y = (BUNCH.target == 0).astype(int)
 X = BUNCH.data.copy()
-feature_names = list(X.columns)
+y = (BUNCH.target == 0).astype(int)
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
@@ -50,7 +45,7 @@ sample.to_csv(ARTIFACTS / 'sample_test.csv', index=False)
 
 scaler = StandardScaler()
 num_transformer = Pipeline(steps=[('scaler', scaler)])
-preprocess = ColumnTransformer(transformers=[('num', num_transformer, feature_names)])
+preprocess = ColumnTransformer(transformers=[('num', num_transformer, list(X.columns))])
 
 models = {
     'Logistic Regression': Pipeline([
@@ -78,57 +73,21 @@ if HAS_XGB:
         tree_method='hist'
     )
 
-metrics_table = []
-reports = {}
-conf_mats = {}
-
+rows = []
 for name, model in models.items():
     model.fit(X_train, y_train)
-    y_prob = None
-    if hasattr(model, 'predict_proba'):
-        y_prob = model.predict_proba(X_test)[:, 1]
-    elif hasattr(model, 'decision_function'):
-        from sklearn.preprocessing import MinMaxScaler
-        scores = model.decision_function(X_test).reshape(-1,1)
-        y_prob = MinMaxScaler().fit_transform(scores).ravel()
-    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:,1] if hasattr(model, 'predict_proba') else None
+    y_pred = (y_prob >= 0.5).astype(int) if y_prob is not None else model.predict(X_test)
 
     acc = accuracy_score(y_test, y_pred)
-    try:
-        auc = roc_auc_score(y_test, y_prob) if y_prob is not None else None
-    except Exception:
-        auc = None
+    auc = roc_auc_score(y_test, y_prob) if y_prob is not None else np.nan
     prec = precision_score(y_test, y_pred, zero_division=0)
     rec = recall_score(y_test, y_pred, zero_division=0)
     f1 = f1_score(y_test, y_pred, zero_division=0)
     mcc = matthews_corrcoef(y_test, y_pred)
 
-    metrics_table.append({
-        'Model': name,
-        'Accuracy': round(acc, 4),
-        'AUC': round(auc, 4) if auc is not None else None,
-        'Precision': round(prec, 4),
-        'Recall': round(rec, 4),
-        'F1': round(f1, 4),
-        'MCC': round(mcc, 4),
-    })
+    rows.append({'Model': name, 'Accuracy': acc, 'AUC': auc, 'Precision': prec, 'Recall': rec, 'F1': f1, 'MCC': mcc})
 
-    reports[name] = classification_report(y_test, y_pred, target_names=['benign(0)','malignant(1)'], output_dict=True)
-    conf_mats[name] = confusion_matrix(y_test, y_pred).tolist()
-
-    import re
-    safe_name = re.sub(r'[^a-z0-9_]+','', name.lower().replace(' ', '_'))
-    joblib.dump(model, ARTIFACTS / f"{safe_name}.pkl")
-
-import pandas as pd
-metrics_df = pd.DataFrame(metrics_table)
+metrics_df = pd.DataFrame(rows)
 metrics_df.to_csv(ARTIFACTS / 'metrics.csv', index=False)
-with open(ARTIFACTS / 'metrics.json', 'w') as f:
-    json.dump({
-        'metrics': metrics_table,
-        'reports': reports,
-        'confusion_matrices': conf_mats,
-        'feature_names': feature_names
-    }, f, indent=2)
-
 print(metrics_df)
